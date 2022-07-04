@@ -1,33 +1,45 @@
-# mqtt-bed
+# Example Home Assistant add-on repository
 
-MQTT control for Serta adjustable beds with Bluetooth, like the [Serta Motion Perfect III](https://www.serta.com/sites/ssb/serta.com/uploads/2016/adjustable-foundations/MotionPerfectIII_Manual_V004_04142016.pdf), 'Glide' with the jiecang ble controller (Dream Motion app) and 'A H Beard' with the DerwentOkin ble controller ("Comfort Enhancement 2" aka "Comfort Plus" app).
+This repository can be used as a "blueprint" for add-on development to help you get started.
 
-Based upon code from https://github.com/danisla/iot-bed
+Add-on documentation: <https://developers.home-assistant.io/docs/add-ons>
 
-## Requirements
-See requirements.txt file.  It now uses asyncio-mqtt and pygatt instead of a subprocess using gatttool.
-The DerwentOkin modules uses bluepy instead of the deprecated pygatt/gatttool.
-```
-pip install -r requirements.txt
-```
+[![Open your Home Assistant instance and show the add add-on repository dialog with a specific repository URL pre-filled.](https://my.home-assistant.io/badges/supervisor_add_addon_repository.svg)](https://my.home-assistant.io/redirect/supervisor_add_addon_repository/?repository_url=https%3A%2F%2Fgithub.com%2Fhome-assistant%2Faddons-example)
 
-[hcitool](http://manpages.ubuntu.com/manpages/focal/en/man1/hcitool.1.html) will probably be needed, to find the address of your bed, which is part of bluez also.
+## Add-ons
 
-## Finding the address of your bed
-```
-$ hcitool lescan 
-LE Scan ...
-61:61:61:4E:A0:B0 (unknown)
-5F:E4:19:C4:13:CC (unknown)
-6F:40:F7:4A:8E:23 (unknown)
-7C:EC:79:FF:6D:02 (unknown)
-7C:EC:79:FF:6D:02 base-i4.00000233
-$
-```
-or if you have the [Serta MP Remote app](https://apk-dl.com/serta-mp-remote/) installed on your phone, you can find the mac address there.
+This repository contains the following add-ons
 
-Your bed will likely have a name starting with *base-i4*. That is the address you want to put in the config.py file.
+### [Example add-on](./example)
 
-## Resources
-* https://github.com/danisla/iot-bed
-* https://www.jaredwolff.com/get-started-with-bluetooth-low-energy/
+![Supports aarch64 Architecture][aarch64-shield]
+![Supports amd64 Architecture][amd64-shield]
+![Supports armhf Architecture][armhf-shield]
+![Supports armv7 Architecture][armv7-shield]
+![Supports i386 Architecture][i386-shield]
+
+_Example add-on to use as a blueprint for new add-ons._
+
+<!--
+
+Notes to developers after forking or using the github template feature:
+- While developing comment out the 'image' key from 'example/config.yaml' to make the supervisor build the addon
+  - Remember to put this back when pushing up your changes.
+- When you merge to the 'main' branch of your repository a new build will be triggered.
+  - Make sure you adjust the 'version' key in 'example/config.yaml' when you do that.
+  - Make sure you update 'example/CHANGELOG.md' when you do that.
+  - The first time this runs you might need to adjust the image configuration on github container registry to make it public
+- Adjust the 'image' key in 'example/config.yaml' so it points to your username instead of 'home-assistant'.
+  - This is where the build images will be published to.
+- Rename the example directory.
+  - The 'slug' key in 'example/config.yaml' should match the directory name.
+- Adjust all keys/url's that points to 'home-assistant' to now point to your user/fork.
+- Share your repository on the forums https://community.home-assistant.io/c/projects/9
+- Do awesome stuff!
+ -->
+
+[aarch64-shield]: https://img.shields.io/badge/aarch64-yes-green.svg
+[amd64-shield]: https://img.shields.io/badge/amd64-yes-green.svg
+[armhf-shield]: https://img.shields.io/badge/armhf-yes-green.svg
+[armv7-shield]: https://img.shields.io/badge/armv7-yes-green.svg
+[i386-shield]: https://img.shields.io/badge/i386-yes-green.svg

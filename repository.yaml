@@ -1,0 +1,4 @@
+# https://developers.home-assistant.io/docs/add-ons/repository#repository-configuration
+name: Home Assistant MQTT Bed repository
+url: "https://github.com/dstarikov/hass-mqtt-bed"
+maintainer: Awesome Maintainer <awesome@example.com>
