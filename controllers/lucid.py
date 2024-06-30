@@ -26,6 +26,8 @@ import logging
 import threading
 import time
 import struct
+import binascii
+import string
 
 from bluepy.btle import Peripheral
 
@@ -140,7 +142,7 @@ class lucidBLEController:
                 end = time.time()
                 if (end - start) < 5:
                     try:
-                        self.charWrite(self, cmd, name)
+                        self.charWrite(cmd, name)
                     except Exception:
                         self.logger.error(
                             "Command failed to transmit despite second attempt, dropping command."
@@ -189,7 +191,8 @@ class lucidBLEController:
                         except Exception as e:
                             self.logger.error(f"    Error reading characteristic: {e}")
                 if updated:
-                    self.logger.info("Finished refreshing updated characteristics")
+                    self.logger.info("Finished refreshing updated characteristics - per preset:")
+                    self.print_preset_values()
             except Exception as e:
                 self.logger.error(f"Error scanning characteristics: {e}")
 
@@ -215,6 +218,16 @@ class lucidBLEController:
             self.logger.info(f"Service {service_uuid} Characteristic {char_uuid} first read: {parsed_value}")
             self.last_known_values[char_uuid] = new_value
             updated = True
+
+        if self.current_preset not in self.preset_characteristics:
+            self.preset_characteristics[self.current_preset] = {}
+        if char_uuid not in self.preset_characteristics[self.current_preset]:
+            self.preset_characteristics[self.current_preset][char_uuid] = {}
+        
+        if parsed_value not in self.preset_characteristics[self.current_preset][char_uuid]:
+            self.preset_characteristics[self.current_preset][char_uuid][parsed_value] = 0
+        self.preset_characteristics[self.current_preset][char_uuid][parsed_value] += 1
+
         return updated
 
     def compare_and_update_descriptor(self, service_uuid, char_uuid, desc_uuid, new_value):
@@ -229,22 +242,55 @@ class lucidBLEController:
             self.logger.info(f"Service {service_uuid} Characteristic {char_uuid} Descriptor {desc_uuid} first read: {parsed_value}")
             self.last_known_values[desc_uuid] = new_value
             updated = True
+
+        if self.current_preset not in self.preset_characteristics:
+            self.preset_characteristics[self.current_preset] = {}
+        if char_uuid not in self.preset_characteristics[self.current_preset]:
+            self.preset_characteristics[self.current_preset][char_uuid] = {}
+        
+        if parsed_value not in self.preset_characteristics[self.current_preset][char_uuid]:
+            self.preset_characteristics[self.current_preset][char_uuid][parsed_value] = 0
+        self.preset_characteristics[self.current_preset][char_uuid][parsed_value] += 1
+
         return updated
 
     def parse_value(self, value):
         try:
             # Attempt to decode as UTF-8 string
-            return value.decode('utf-8')
+            decoded_value = value.decode('utf-8')
+            if all(char in string.printable for char in decoded_value):  # Check if all characters are printable
+                return decoded_value
         except UnicodeDecodeError:
             pass
 
         # Try to interpret as integer (assuming little-endian encoding)
         if len(value) == 1:
-            return struct.unpack('B', value)[0]
+            unpacked_value = struct.unpack('B', value)[0]
+            if unpacked_value != 0:
+                return str(unpacked_value)
         elif len(value) == 2:
-            return struct.unpack('<H', value)[0]
+            unpacked_value = struct.unpack('<H', value)[0]
+            if unpacked_value != 0:
+                return str(unpacked_value)
         elif len(value) == 4:
-            return struct.unpack('<I', value)[0]
+            unpacked_value = struct.unpack('<I', value)[0]
+            if unpacked_value != 0:
+                return str(unpacked_value)
 
-        # If all else fails, return the raw byte representation
-        return value.hex()
+        # If the value is all zeroes, return a descriptive placeholder
+        if all(b == 0 for b in value):
+            return "<empty>"
+
+        # If all else fails, return the raw byte representation as hex
+        return binascii.hexlify(value).decode('utf-8')
+
+    def print_preset_values(self):
+        for preset, characteristics in self.preset_characteristics.items():
+            if preset == "Unknown":
+                continue
+            self.logger.info(f"Preset: {preset}")
+            for char_uuid, values in characteristics.items():
+                if str(char_uuid) in ['0000ffe9-0000-1000-8000-00805f9b34fb', '0000ffe4-0000-1000-8000-00805f9b34fb']:
+                    self.logger.info(f"  Characteristic {char_uuid}:")
+                    for value, count in values.items():
+                        self.logger.info(f"    Value: {value}, Count: {count}")
