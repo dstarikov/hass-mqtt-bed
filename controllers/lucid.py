@@ -25,9 +25,7 @@ Note: This module is based off the dewertokin.py controller.
 import logging
 import threading
 import time
-import struct
 import binascii
-import string
 
 from bluepy.btle import Peripheral
 
@@ -37,104 +35,148 @@ class lucidBLEController:
         self.logger = logging.getLogger(__name__)
         self.charWriteInProgress = threading.Lock()
         self.addr = addr
+        self.device = None
         self.manufacturer = "Lucid"
-        self.current_preset = "Unknown"
-        self.previous_preset = "None"
         self.model = "L600"
+        
         self.commands = {
-            "Flat Preset":        "e6fe160000000800fd",
-            "ZeroG Preset":       "e6fe160010000000f5",
-            "TV Preset":          "e6fe160040000000c5",
-            "Lounge Preset":      "e6fe160020000000e5",
-            "Quiet Sleep":        "e6fe16008000000085",
-            "Memory 1":           "e6fe16000001000004",
-            "Memory 2":           "e6fe16000004000001",
-            "Underlight":         "e6fe16000002000003",
-            "Lift Head":          "e6fe16010000000004",
-            "Lower Head":         "e6fe16020000000003",
-            "Lift Foot":          "e6fe16040000000001",
-            "Lower Foot":         "e6fe160800000000fd",
-            "Massage Toggle":     "e6fe16000100000004",
+            "preset_flat": "e6fe160000000800fd",
+            "preset_zerog": "e6fe160010000000f5",
+            "preset_tv": "e6fe160040000000c5",
+            "preset_lounge": "e6fe160020000000e5",
+            "preset_quiet_sleep": "e6fe16008000000085",
+            "memory_1": "e6fe16000001000004",
+            "memory_2": "e6fe16000004000001",
+            "underlight": "e6fe16000002000003",
+            "head_up": "e6fe16010000000004",
+            "head_down": "e6fe16020000000003",
+            "foot_up": "e6fe16040000000001",
+            "foot_down": "e6fe160800000000fd",
+            "massage_toggle": "e6fe16000100000004",
             # Note: Wave cycles "On High", "On Medium", "On Low", "Off"
-            "Wave Massage Cycle": "e6fe160000001000f5",
+            "wave_massage_cycle": "e6fe160000001000f5",
             # Note: Head and Foot cycles "On Low, "On Medium", "On High", "Off"
-            "Head Massage Cycle": "e6fe160008000000fd",
-            "Foot Massage Cycle": "e6fe16000400000001",
-            "Massage Timer":      "e6fe16000200000003",
-            "Keepalive NOOP":     "e6fe16000000000005",
+            "head_massage_cycle": "e6fe160008000000fd",
+            "foot_massage_cycle": "e6fe16000400000001",
+            "massage_timer": "e6fe16000200000003",
+            "keepalive_noop": "e6fe16000000000005",
         }
-        # Initialise the adapter and connect to the bed before we start waiting for messages.
-        self.last_known_values = {}
-        self.seen_services = set()
-        self.seen_characteristics = set()
-        self.preset_characteristics = {}
-        self.connectBed()
-        # Start the background polling/keepalive/heartbeat function.
-        # thread = threading.Thread(target=self.bluetoothPoller, args=())
-        # thread.daemon = True
-        # thread.start()
-        self.scan_characteristics_periodically()
 
-    # There seem to be a lot of conditions that cause the bed to disconnect Bluetooth.
-    # Here we use the value of 040200000000, which seems to be a noop.
-    # This lets us poll the bed, detect a disconnection and reconnect before the user notices.
+        self.buttons = [
+            ("preset_flat", "Preset Flat"),
+            ("preset_zerog", "Preset ZeroG"),
+            ("preset_tv", "Preset TV"),
+            ("preset_lounge", "Preset Lounge"),
+            ("preset_quiet_sleep", "Preset Quiet Sleep"),
+            ("memory_1", "Memory 1"),
+            ("memory_2", "Memory 2"),
+            ("underlight", "Underlight"),
+            ("head_up", "Head Up"),
+            ("head_down", "Head Down"),
+            ("foot_up", "Foot Up"),
+            ("foot_down", "Foot Down"),
+            ("massage_toggle", "Massage Toggle"),
+            ("wave_massage_cycle", "Wave Massage Cycle"),
+            ("head_massage_cycle", "Head Massage Cycle"),
+            ("foot_massage_cycle", "Foot Massage Cycle"),
+            ("massage_timer", "Massage Timer"),
+        ]
+
+        # For reading the current position/angle of the bed
+        self.status_service_uuid = "0000ffe0-0000-1000-8000-00805f9b34fb"
+        self.status_characteristic_uuid = "0000ffe4-0000-1000-8000-00805f9b34fb"
+        self.status_characteristic = None
+
+        # State of the bed to track
+        self.head_angle = 0
+        self.foot_angle = 0
+        self.light_status = False
+
+        self.switches = [
+            ("light", "Bed Light"),
+            # TODO: figure out state for massage features
+        ]  # List of Tuples containing the MQTT payloads for the switch and a friendly name
+
+        self.sensors = [
+            ("head_angle", "°", "Head Angle"),
+            ("foot_angle", "°", "Feet Angle"),
+        ]  # List of Tuples containing the MQTT topic for any sensors, the HA unit of measurement, and friendly name
+
+        # Initialize the adapter and connect to the bed before we start waiting for messages.
+        self.connectBed()
+
+        # Start the background polling/keepalive/heartbeat function.
+        self.start_keepalive_thread()
+
+    def get_state_dict(self):
+        return {
+            "head_angle": self.head_angle,
+            "foot_angle": self.foot_angle,
+            "light": "ON" if self.light_status else "OFF"
+        }
+
+    def start_keepalive_thread(self):
+        thread = threading.Thread(target=self.bluetoothPoller, args=())
+        thread.daemon = True
+        thread.start()
+
     def bluetoothPoller(self):
         while True:
             with self.charWriteInProgress:
                 try:
-                    cmd = self.commands.get("Keepalive NOOP", None)
+                    cmd = self.commands.get("keepalive_noop", None)
                     self.device.writeCharacteristic(
                         0x001A, bytes.fromhex(cmd), withResponse=True
                     )
-                    self.logger.debug("Keepalive success!")
+                    self.refresh_status()
                 except Exception:
                     self.logger.error("Keepalive failed! (1/2)")
                     try:
-                        # We perform a second keepalive check 0.5 seconds later before reconnecting.
                         time.sleep(0.5)
-                        cmd = self.commands.get("Keepalive NOOP", None)
+                        cmd = self.commands.get("keepalive_noop", None)
                         self.device.writeCharacteristic(
                             0x001A, bytes.fromhex(cmd), withResponse=True
                         )
                         self.logger.info("Keepalive success!")
+                        self.refresh_status()
                     except Exception:
-                        # If both keepalives failed, we reconnect.
                         self.logger.error("Keepalive failed! (2/2)")
                         self.connectBed()
-            time.sleep(10)
+            time.sleep(1)
 
-    # Separate out the bed connection to an infinite loop that can be called on init (or a communications failure).
     def connectBed(self):
         while True:
             try:
                 self.logger.debug("Attempting to connect to bed.")
                 self.device = Peripheral(deviceAddr=self.addr, addrType="random")
                 self.logger.info("Connected to bed.")
+                self.status_characteristic = self.get_status_characteristic()
+                return
             except Exception as e:
                 self.logger.error(f"Error connecting to bed: {e}")
 
-            if self.device is not None:
-                try:
-                    self.logger.debug("Enabling bed control.")
-                    self.device.readCharacteristic(0x001A)
-                    self.device.readCharacteristic(0x001D)
-                    self.logger.info("Bed control enabled.")
-                    return
-                except Exception as e:
-                    self.logger.error(f"Error setting up bed control: {e}")
             self.logger.error("Error connecting to bed, retrying in one second.")
             time.sleep(1)
 
-    # Separate out the command handling.
+    def get_status_characteristic(self):
+        try:
+            service = self.device.getServiceByUUID(self.status_service_uuid)
+            characteristic = service.getCharacteristics(forUUID=self.status_characteristic_uuid)[0]
+            self.logger.info(f"Characteristic obtained: {characteristic}")
+            return characteristic
+        except Exception as e:
+            self.logger.error(f"Error retrieving characteristic: {e}")
+            return None
+
     def send_command(self, name):
         cmd = self.commands.get(name, None)
         if cmd is None:
-            # print, but otherwise ignore Unknown Commands.
             self.logger.error(f"Unknown Command '{cmd}' -- ignoring.")
             return
         with self.charWriteInProgress:
             try:
-                self.charWrite(cmd, name)
+                self.charWrite(cmd)
+                return self.get_state_dict()
             except Exception:
                 self.logger.error("Error sending command, attempting reconnect.")
                 start = time.time()
@@ -142,7 +184,8 @@ class lucidBLEController:
                 end = time.time()
                 if (end - start) < 5:
                     try:
-                        self.charWrite(cmd, name)
+                        self.charWrite(cmd)
+                        return self.get_state_dict()
                     except Exception:
                         self.logger.error(
                             "Command failed to transmit despite second attempt, dropping command."
@@ -152,145 +195,61 @@ class lucidBLEController:
                         "Bluetooth reconnect took more than five seconds, dropping command."
                     )
 
-    # Separate charWrite function.
-    def charWrite(self, cmd, name):
+    def charWrite(self, cmd):
         self.logger.debug("Attempting to transmit command.")
-        self.device.writeCharacteristic(0x001A, bytes.fromhex(cmd), withResponse=True)
-        self.logger.info("Command sent successfully.")
-        self.previous_preset = self.current_preset
-        self.current_preset = name
-        return
-
-    def scan_characteristics(self):
-        with self.charWriteInProgress:
-            try:
-                updated = False
-                services = self.device.getServices()
-                for service in services:
-                    if service.uuid not in self.seen_services:
-                        updated = True
-                        self.logger.info(f"Service {service.uuid} found for the first time:")
-                        self.seen_services.add(service.uuid)
-
-                    characteristics = service.getCharacteristics()
-                    for char in characteristics:
-                        if char.uuid not in self.seen_characteristics:
-                            updated = True
-                            self.logger.info(f"  Characteristic {char.uuid} found for the first time:")
-                            self.seen_characteristics.add(char.uuid)
-
-                        try:
-                            value = char.read()
-                            if self.compare_and_update(service.uuid, char.uuid, value):
-                                updated = True
-                            descriptors = char.getDescriptors()
-                            for desc in descriptors:
-                                desc_value = desc.read()
-                                if self.compare_and_update_descriptor(service.uuid, char.uuid, desc.uuid, desc_value):
-                                    updated = True
-                        except Exception as e:
-                            self.logger.error(f"    Error reading characteristic: {e}")
-                if updated:
-                    self.logger.info("Finished refreshing updated characteristics - per preset:")
-                    self.print_preset_values()
-            except Exception as e:
-                self.logger.error(f"Error scanning characteristics: {e}")
-
-    def scan_characteristics_periodically(self):
-        thread = threading.Thread(target=self.periodic_scan, args=())
-        thread.daemon = True
-        thread.start()
-
-    def periodic_scan(self):
-        while True:
-            self.scan_characteristics()
-            time.sleep(1)  # Adjust the interval as needed
-
-    def compare_and_update(self, service_uuid, char_uuid, new_value) -> bool:
-        updated = False
-        parsed_value = self.parse_value(new_value)
-        if char_uuid in self.last_known_values:
-            if self.last_known_values[char_uuid] != new_value:
-                self.logger.info(f"Service {service_uuid} Characteristic {char_uuid} changed from {self.previous_preset} = {self.parse_value(self.last_known_values[char_uuid])} to {self.current_preset} = {parsed_value}")
-                self.last_known_values[char_uuid] = new_value
-                updated = True
-        else:
-            self.logger.info(f"Service {service_uuid} Characteristic {char_uuid} first read: {parsed_value}")
-            self.last_known_values[char_uuid] = new_value
-            updated = True
-
-        if self.current_preset not in self.preset_characteristics:
-            self.preset_characteristics[self.current_preset] = {}
-        if char_uuid not in self.preset_characteristics[self.current_preset]:
-            self.preset_characteristics[self.current_preset][char_uuid] = {}
-        
-        if parsed_value not in self.preset_characteristics[self.current_preset][char_uuid]:
-            self.preset_characteristics[self.current_preset][char_uuid][parsed_value] = 0
-        self.preset_characteristics[self.current_preset][char_uuid][parsed_value] += 1
-
-        return updated
-
-    def compare_and_update_descriptor(self, service_uuid, char_uuid, desc_uuid, new_value):
-        updated = False
-        parsed_value = self.parse_value(new_value)
-        if desc_uuid in self.last_known_values:
-            if self.last_known_values[desc_uuid] != new_value:
-                self.logger.info(f"Service {service_uuid} Characteristic {char_uuid} Descriptor {desc_uuid} changed from {self.previous_preset} = {self.parse_value(self.last_known_values[desc_uuid])} to {self.current_preset} = {parsed_value}")
-                self.last_known_values[desc_uuid] = new_value
-                updated = True
-        else:
-            self.logger.info(f"Service {service_uuid} Characteristic {char_uuid} Descriptor {desc_uuid} first read: {parsed_value}")
-            self.last_known_values[desc_uuid] = new_value
-            updated = True
-
-        if self.current_preset not in self.preset_characteristics:
-            self.preset_characteristics[self.current_preset] = {}
-        if char_uuid not in self.preset_characteristics[self.current_preset]:
-            self.preset_characteristics[self.current_preset][char_uuid] = {}
-        
-        if parsed_value not in self.preset_characteristics[self.current_preset][char_uuid]:
-            self.preset_characteristics[self.current_preset][char_uuid][parsed_value] = 0
-        self.preset_characteristics[self.current_preset][char_uuid][parsed_value] += 1
-
-        return updated
-
-    def parse_value(self, value):
+        response = self.device.writeCharacteristic(0x001A, bytes.fromhex(cmd), withResponse=True)
+        self.logger.info(f"Command sent successfully, response: {response}")
+        self.refresh_status()
+        self.logger.debug(f"Finished refreshing the status")
+        return self.get_state_dict()
+    
+    def refresh_status(self):
         try:
-            # Attempt to decode as UTF-8 string
-            decoded_value = value.decode('utf-8')
-            if all(char in string.printable for char in decoded_value):  # Check if all characters are printable
-                return decoded_value
-        except UnicodeDecodeError:
-            pass
+            if self.status_characteristic:
+                value = self.status_characteristic.read()
+                self.update_status(value)
+            else:
+                self.logger.error("Characteristic not found, reconnecting.")
+                self.connectBed()
+        except Exception as e:
+            self.logger.error(f"Error scanning characteristics: {e}")
 
-        # Try to interpret as integer (assuming little-endian encoding)
-        if len(value) == 1:
-            unpacked_value = struct.unpack('B', value)[0]
-            if unpacked_value != 0:
-                return str(unpacked_value)
-        elif len(value) == 2:
-            unpacked_value = struct.unpack('<H', value)[0]
-            if unpacked_value != 0:
-                return str(unpacked_value)
-        elif len(value) == 4:
-            unpacked_value = struct.unpack('<I', value)[0]
-            if unpacked_value != 0:
-                return str(unpacked_value)
+    def update_status(self, raw_value):
+        value = binascii.hexlify(raw_value).decode('utf-8')
+        new_light_status = self.decode_light_status(value)
+        if self.light_status != new_light_status:
+            self.logger.info(f"Updated light state, it is now {'ON' if new_light_status else 'OFF'}")
+            self.light_status = new_light_status
 
-        # If the value is all zeroes, return a descriptive placeholder
-        if all(b == 0 for b in value):
-            return "<empty>"
+        head_angle_raw = self.decode_head_angle_raw(value)
+        foot_angle_raw = self.decode_foot_angle_raw(value)
+        new_head_angle = self.normalize_angle(head_angle_raw, max_raw=16000, max_angle=60)
+        new_foot_angle = self.normalize_angle(foot_angle_raw, max_raw=12000, max_angle=45)
+        if self.foot_angle != new_foot_angle or self.head_angle != new_head_angle:
+            self.logger.info(
+                f"Updated angles - Head went from {self.head_angle} to {new_head_angle} degrees,"
+                f" Foot went from {self.foot_angle} to {new_foot_angle} degrees")
+            self.head_angle = new_head_angle
+            self.foot_angle = new_foot_angle
+    
+    def decode_light_status(self, value) -> bool:
+        light_status = value[26]
+        return light_status == "4"
 
-        # If all else fails, return the raw byte representation as hex
-        return binascii.hexlify(value).decode('utf-8')
+    def decode_head_angle_raw(self, value) -> int:
+        byte1 = value[6:8]
+        byte2 = value[8:10]
+        head_angle_hex = byte2 + byte1
+        head_angle = int(head_angle_hex, 16)
+        return head_angle
 
-    def print_preset_values(self):
-        for preset, characteristics in self.preset_characteristics.items():
-            if preset == "Unknown":
-                continue
-            self.logger.info(f"Preset: {preset}")
-            for char_uuid, values in characteristics.items():
-                if str(char_uuid) in ['0000ffe9-0000-1000-8000-00805f9b34fb', '0000ffe4-0000-1000-8000-00805f9b34fb']:
-                    self.logger.info(f"  Characteristic {char_uuid}:")
-                    for value, count in values.items():
-                        self.logger.info(f"    Value: {value}, Count: {count}")
+    def decode_foot_angle_raw(self, value) -> int:
+        byte1 = value[10:12]
+        byte2 = value[12:14]
+        foot_angle_hex = byte2 + byte1
+        foot_angle = int(foot_angle_hex, 16)
+        return foot_angle
+
+    def normalize_angle(self, raw_angle, min_raw=0, max_raw=16000, min_angle=0, max_angle=60) -> float:
+        normalized_angle = min_angle + (raw_angle - min_raw) * (max_angle - min_angle) / (max_raw - min_raw)
+        return normalized_angle
