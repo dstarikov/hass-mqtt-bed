@@ -26,3 +26,8 @@ RECONNECT_INTERVAL: 3  # Seconds
 # Currently only works with the Linak controller
 # https://www.home-assistant.io/integrations/mqtt/#mqtt-discovery
 MQTT_DISCOVERY: false
+
+# Interval to refresh state from BLE and publish it to MQTT
+# False or 0 seconds means disabled
+# Currently only works with the Lucid controller
+KEEPALIVE_REFRESH_INTERVAL: 0  # Seconds

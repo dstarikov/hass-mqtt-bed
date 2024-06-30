@@ -59,7 +59,7 @@ class lucidBLEController:
             "head_massage_cycle": "e6fe160008000000fd",
             "foot_massage_cycle": "e6fe16000400000001",
             "massage_timer": "e6fe16000200000003",
-            "keepalive_noop": "e6fe16000000000005",
+            "keepalive_refresh": "e6fe16000000000005",
         }
 
         self.buttons = [
@@ -109,44 +109,12 @@ class lucidBLEController:
         # Initialize the adapter and connect to the bed before we start waiting for messages.
         self.connectBed(ble)
 
-        # Start the background polling/keepalive/heartbeat function.
-        self.start_keepalive_thread()
-
     def get_state_dict(self):
         return {
             "head_angle": self.head_angle,
             "foot_angle": self.foot_angle,
             "light": "ON" if self.light_status else "OFF"
         }
-
-    def start_keepalive_thread(self):
-        thread = threading.Thread(target=self.bluetoothPoller, args=())
-        thread.daemon = True
-        thread.start()
-
-    def bluetoothPoller(self):
-        while True:
-            with self.charWriteInProgress:
-                try:
-                    cmd = self.commands.get("keepalive_noop", None)
-                    self.device.writeCharacteristic(
-                        0x001A, bytes.fromhex(cmd), withResponse=True
-                    )
-                    self.refresh_status()
-                except Exception:
-                    self.logger.error("Keepalive failed! (1/2)")
-                    try:
-                        time.sleep(0.5)
-                        cmd = self.commands.get("keepalive_noop", None)
-                        self.device.writeCharacteristic(
-                            0x001A, bytes.fromhex(cmd), withResponse=True
-                        )
-                        self.logger.info("Keepalive success!")
-                        self.refresh_status()
-                    except Exception:
-                        self.logger.error("Keepalive failed! (2/2)")
-                        self.connectBed(ble)
-            time.sleep(1)
 
     def connectBed(self, ble):
         while True:

@@ -39,6 +39,7 @@ MQTT_QOS = config.get("MQTT_QOS", 0)
 RECONNECT_INTERVAL = config.get("RECONNECT_INTERVAL", 3)
 # Auto Discovery ----------------------------------------------------------------
 MQTT_DISCOVERY = config.get("MQTT_DISCOVERY", True)
+KEEPALIVE_REFRESH_INTERVAL = config.get("KEEPALIVE_REFRESH_INTERVAL", None)
 MQTT_BED_NAME = config.get("MQTT_BED_NAME", "Smart Bed")
 MQTT_DISCOVERY_PREFIX = config.get("MQTT_DISCOVERY_PREFIX", "homeassistant")
 
@@ -75,6 +76,11 @@ async def bed_loop(ble):
         messages = await stack.enter_async_context(manager)
         task = asyncio.create_task(bed_command(ble, messages, client))
         tasks.add(task)
+
+        # Add keepalive_refresh task
+        if KEEPALIVE_REFRESH_INTERVAL:
+            keepalive_task = asyncio.create_task(keepalive_refresh(ble, client))
+            tasks.add(keepalive_task)
 
         try:
             # Subscribe to topic(s)
@@ -125,6 +131,20 @@ async def bed_command(ble, messages, client):
             for key, value in state.items():
                 logger.debug(f"Returned state: {value} publishing to bed/{key}/state")
                 await client.publish(f"bed/{key}/state", str(value), qos=1)
+
+async def keepalive_refresh(ble, client):
+    while True:
+        command = "keepalive_refresh"
+        logger.debug(f"Sending keepalive/refresh command: {command}")
+
+        state = ble.send_command(command)
+
+        if state:
+            for key, value in state.items():
+                logger.debug(f"Returned state: {value} publishing to bed/{key}/state")
+                await client.publish(f"bed/{key}/state", str(value), qos=1)
+
+        await asyncio.sleep(KEEPALIVE_REFRESH_INTERVAL)
 
 
 async def cancel_tasks(tasks):
