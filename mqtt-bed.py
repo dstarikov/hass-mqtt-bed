@@ -158,19 +158,39 @@ def create_discovery_payload(ble, entity, entity_type):
                 {"command_topic": f"{MQTT_BASE_TOPIC}", "payload_press": entity[0]}
             )
         case "switch":
-            base_payload.update(
-                {
-                    "command_topic": f"{MQTT_BASE_TOPIC}/{entity[0]}/toggle",
-                    "state_topic": f"{MQTT_BASE_TOPIC}/{entity[0]}/state",
-                    "payload": f"{entity[0]}",
-                }
-            )
+            if len(entity) == 4:
+                base_payload.update(
+                    {
+                        "command_topic": f"{MQTT_BASE_TOPIC}",
+                        "state_topic": f"{MQTT_BASE_TOPIC}/{entity[0]}/state",
+                        "payload_on": f"{entity[0]}",
+                        "payload_off": f"{entity[0]}",
+                        "state_on": "ON",
+                        "state_off": "OFF",
+                    }
+                )
+            else:
+                base_payload.update(
+                    {
+                        "command_topic": f"{MQTT_BASE_TOPIC}/{entity[0]}/toggle",
+                        "state_topic": f"{MQTT_BASE_TOPIC}/{entity[0]}/state",
+                        "payload": f"{entity[0]}",
+                    }
+                )
+
         case "sensor":
             base_payload.update(
                 {
                     "name": entity[2],
                     "state_topic": f"{MQTT_BASE_TOPIC}/{entity[0]}/state",
                     "unit_of_measurement": entity[1],
+                }
+            )
+        case "binary_sensor":
+            base_payload.update(
+                {
+                    "name": entity[1],
+                    "state_topic": f"{MQTT_BASE_TOPIC}/{entity[0]}/state",
                 }
             )
 
@@ -182,6 +202,7 @@ async def publish_discovery_messages(ble, client):
         "button": getattr(ble, "buttons", []),
         "switch": getattr(ble, "switches", []),
         "sensor": getattr(ble, "sensors", []),
+        "binary_sensor": getattr(ble, "binary_sensors", []),
     }
 
     for entity_type, entities in entity_types.items():
@@ -198,6 +219,11 @@ async def zero_sensors(ble, client):
         for sensor in ble.sensors:
             state_topic = f"{MQTT_BASE_TOPIC}/{sensor[0]}/state"
             initial_value = "0"
+            await client.publish(state_topic, initial_value, qos=1, retain=True)
+    if hasattr(ble, "binary_sensors"):
+        for sensor in ble.binary_sensors:
+            state_topic = f"{MQTT_BASE_TOPIC}/{sensor[0]}/state"
+            initial_value = "OFF"
             await client.publish(state_topic, initial_value, qos=1, retain=True)
 
 

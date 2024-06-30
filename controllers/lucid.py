@@ -16,7 +16,7 @@ https://play.google.com/store/apps/details?id=com.ore.jalon.neworebeding
 
 Using this application I intercepted the Bluetooth codes.
 
-Note: This module is based off the dewertokin.py controller.
+Note: This module is based off the dewertokin.py and linak.py controllers
 
 """
 # ---------------------------------------------------------------------------
@@ -27,7 +27,7 @@ import threading
 import time
 import binascii
 
-from bluepy.btle import Peripheral
+import bluepy.btle as ble
 
 
 class lucidBLEController:
@@ -38,7 +38,7 @@ class lucidBLEController:
         self.device = None
         self.manufacturer = "Lucid"
         self.model = "L600"
-        
+
         self.commands = {
             "preset_flat": "e6fe160000000800fd",
             "preset_zerog": "e6fe160010000000f5",
@@ -47,7 +47,7 @@ class lucidBLEController:
             "preset_quiet_sleep": "e6fe16008000000085",
             "memory_1": "e6fe16000001000004",
             "memory_2": "e6fe16000004000001",
-            "underlight": "e6fe16000002000003",
+            "light": "e6fe16000002000003",
             "head_up": "e6fe16010000000004",
             "head_down": "e6fe16020000000003",
             "foot_up": "e6fe16040000000001",
@@ -70,7 +70,6 @@ class lucidBLEController:
             ("preset_quiet_sleep", "Preset Quiet Sleep"),
             ("memory_1", "Memory 1"),
             ("memory_2", "Memory 2"),
-            ("underlight", "Underlight"),
             ("head_up", "Head Up"),
             ("head_down", "Head Down"),
             ("foot_up", "Foot Up"),
@@ -93,7 +92,8 @@ class lucidBLEController:
         self.light_status = False
 
         self.switches = [
-            ("light", "Bed Light"),
+            # state topic |  entity name | on command | off command
+            ( "light",       "Light",      "light",     "light"),
             # TODO: figure out state for massage features
         ]  # List of Tuples containing the MQTT payloads for the switch and a friendly name
 
@@ -102,8 +102,12 @@ class lucidBLEController:
             ("foot_angle", "°", "Feet Angle"),
         ]  # List of Tuples containing the MQTT topic for any sensors, the HA unit of measurement, and friendly name
 
+        # self.binary_sensors = [
+        #     ("light", "Light"),
+        # ]  # List of Tuples containing the MQTT topic for any sensors, the HA unit of measurement, and friendly name
+
         # Initialize the adapter and connect to the bed before we start waiting for messages.
-        self.connectBed()
+        self.connectBed(ble)
 
         # Start the background polling/keepalive/heartbeat function.
         self.start_keepalive_thread()
@@ -141,14 +145,14 @@ class lucidBLEController:
                         self.refresh_status()
                     except Exception:
                         self.logger.error("Keepalive failed! (2/2)")
-                        self.connectBed()
+                        self.connectBed(ble)
             time.sleep(1)
 
-    def connectBed(self):
+    def connectBed(self, ble):
         while True:
             try:
                 self.logger.debug("Attempting to connect to bed.")
-                self.device = Peripheral(deviceAddr=self.addr, addrType="random")
+                self.device = ble.Peripheral(deviceAddr=self.addr, addrType="random")
                 self.logger.info("Connected to bed.")
                 self.status_characteristic = self.get_status_characteristic()
                 return
@@ -180,7 +184,7 @@ class lucidBLEController:
             except Exception:
                 self.logger.error("Error sending command, attempting reconnect.")
                 start = time.time()
-                self.connectBed()
+                self.connectBed(ble)
                 end = time.time()
                 if (end - start) < 5:
                     try:
@@ -202,7 +206,7 @@ class lucidBLEController:
         self.refresh_status()
         self.logger.debug(f"Finished refreshing the status")
         return self.get_state_dict()
-    
+
     def refresh_status(self):
         try:
             if self.status_characteristic:
@@ -210,7 +214,7 @@ class lucidBLEController:
                 self.update_status(value)
             else:
                 self.logger.error("Characteristic not found, reconnecting.")
-                self.connectBed()
+                self.connectBed(ble)
         except Exception as e:
             self.logger.error(f"Error scanning characteristics: {e}")
 
@@ -231,7 +235,7 @@ class lucidBLEController:
                 f" Foot went from {self.foot_angle} to {new_foot_angle} degrees")
             self.head_angle = new_head_angle
             self.foot_angle = new_foot_angle
-    
+
     def decode_light_status(self, value) -> bool:
         light_status = value[26]
         return light_status == "4"
