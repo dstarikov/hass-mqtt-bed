@@ -129,8 +129,8 @@ async def bed_command(ble, messages, client):
         # Publish each state key-value pair to MQTT
         if state:
             for key, value in state.items():
-                logger.debug(f"Returned state: {value} publishing to bed/{key}/state")
-                await client.publish(f"bed/{key}/state", str(value), qos=1)
+                logger.debug(f"Returned state: {value} publishing to {MQTT_BASE_TOPIC}/{key}/state")
+                await client.publish(f"{MQTT_BASE_TOPIC}/{key}/state", str(value), qos=1)
 
 async def keepalive_refresh(ble, client):
     while True:
@@ -141,8 +141,8 @@ async def keepalive_refresh(ble, client):
 
         if state:
             for key, value in state.items():
-                logger.debug(f"Returned state: {value} publishing to bed/{key}/state")
-                await client.publish(f"bed/{key}/state", str(value), qos=1)
+                logger.debug(f"Returned state: {value} publishing to {MQTT_BASE_TOPIC}/{key}/state")
+                await client.publish(f"{MQTT_BASE_TOPIC}/{key}/state", str(value), qos=1)
 
         await asyncio.sleep(KEEPALIVE_REFRESH_INTERVAL)
 
