@@ -12,6 +12,7 @@ from controllers.dewertokin import dewertokinBLEController
 from controllers.dewertokin_old import dewertokinOldBLEController
 from controllers.jiecang import jiecangBLEController
 from controllers.linak import linakBLEController
+from controllers.lucid import lucidBLEController
 from controllers.serta import sertaBLEController
 
 # Load the YAML config
@@ -207,6 +208,8 @@ async def main():
         ble = jiecangBLEController(BED_ADDRESS)
     elif BED_TYPE == "dewertokin":
         ble = dewertokinBLEController(BED_ADDRESS)
+    elif BED_TYPE == "lucid":
+        ble = lucidBLEController(BED_ADDRESS)
     elif BED_TYPE == "dewertokin_old":
         ble = dewertokinOldBLEController(BED_ADDRESS)
     elif BED_TYPE == "linak":
